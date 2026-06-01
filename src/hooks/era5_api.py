@@ -19,11 +19,11 @@ request = {
         "100m_v_component_of_wind",
         "mean_wave_direction",
         "mean_wave_period",
-        "significant_height_of_combined_wind_waves_and_swell"
+        "significant_height_of_combined_wind_waves_and_swell",
     ],
     "location": {"longitude": 19.25, "latitude": 31},
     "date": ["2000-01-01/2026-03-17"],
-    "data_format": "csv"
+    "data_format": "csv",
 }
 
 client = cdsapi.Client()
