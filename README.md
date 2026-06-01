@@ -1,36 +1,75 @@
-# 🌊 Modelo Preditivo de Inundações Costeiras
+# LocalFloodForecast
 
-> Projeto desenvolvido para a disciplina de Inteligência Artificial / Machine Learning  
-> Previsão de inundações marítimas com **24 horas de antecedência** utilizando dados climáticos do ERA5
-
----
-
-## 📋 Descrição do Projeto
-
-Este projeto tem como objetivo desenvolver um modelo preditivo capaz de identificar condições climáticas que precedem eventos de inundação costeira, emitindo alertas com até **24 horas de antecedência**.
-
-A abordagem combina técnicas de **aprendizado não supervisionado** (clustering) e **aprendizado supervisionado** (classificação), formando um pipeline completo de Machine Learning aplicado a dados oceanográficos e meteorológicos históricos.
-
-O problema é tratado como uma série temporal: o modelo aprende padrões que **antecedem** eventos de inundação, e não apenas os descrevem no momento em que ocorrem. Para isso, são utilizadas *lag features* — representações defasadas no tempo das variáveis climáticas — que permitem ao modelo "enxergar o passado" para prever o futuro.
+> Detecção não supervisionada de eventos de cheia costeira em séries de
+> reanálise climática ERA5. Projeto da disciplina de Inteligência
+> Artificial / Machine Learning.
 
 ---
 
-## 🗂️ Estrutura do Repositório
+## Visão geral
+
+O pipeline identifica, em uma série temporal de variáveis meteorológicas,
+os instantes cujas condições são **anômalas e típicas de cheia costeira**.
+A abordagem é **inteiramente não supervisionada** e combina dois
+detectores de anomalia rodando em paralelo com um clustering de regimes:
+
+- **IsolationForest** — isola os ~5% de instantes globalmente mais atípicos.
+- **Local Outlier Factor (LOF)** — isola os ~5% de instantes anômalos em
+  relação à densidade local da vizinhança.
+- **KMeans** — agrupa os instantes em 4 regimes meteorológicos e elege o
+  cluster de risco por ranking de assinaturas de tempestade (alta
+  precipitação + baixa pressão + rajadas fortes).
+
+Para cada detector, `flood_risk_flag = is_anomaly & in_flood_cluster`. Os
+dois flags são mantidos em paralelo (`flood_risk_flag_iso` /
+`flood_risk_flag_lof`) e comparados via Jaccard, overlap por método e
+categorias mutuamente exclusivas (só Iso, só LOF, ambos).
+
+Não há classificador supervisionado, train/test split, predição com
+antecedência nem modelo serializado — o foco é **detecção sobre o
+histórico**. A evolução do projeto (agrupamento de timesteps em eventos,
+correção da agregação de `tp`, validação contra cheias reais) está
+trackada em [docs/TODO_evolucoes_analiticas.md](docs/TODO_evolucoes_analiticas.md).
+
+---
+
+## Arquitetura
+
+O ponto de entrada é o script [src/main.py](src/main.py), que orquestra um
+**pacote modular** em [src/flood/](src/flood/). Cada módulo tem uma
+responsabilidade isolada:
+
+| Módulo | Responsabilidade |
+|---|---|
+| [config.py](src/flood/config.py) | Fonte única de hiperparâmetros e caminhos, com justificativas em comentário |
+| [data.py](src/flood/data.py) | Carga do CSV ERA5 + reamostragem 6h |
+| [features.py](src/flood/features.py) | Engenharia de features (`wind_speed_*`, `dewpoint_depression`, `msl_tendency`) + padronização |
+| [model.py](src/flood/model.py) | `detect_anomalies_iso`, `detect_anomalies_lof`, `cluster_regimes`, `flag_flood_risk`, `project_pca` |
+| [diagnostics.py](src/flood/diagnostics.py) | Validação empírica dos hiperparâmetros (elbow, silhouette, sensibilidade de `contamination` e `n_neighbors`, Jaccard Iso×LOF, variância PCA) |
+| [viz.py](src/flood/viz.py) | Tema dark + builders de figuras estáticas (matplotlib) + escrita de CSVs |
+
+A saída de cada execução vai para um diretório carimbado pelo timestamp
+em [src/graphics/](src/graphics/) (git-ignored).
+
+> O notebook [src/main.ipynb](src/main.ipynb) é mantido **apenas como
+> material de referência histórico** e não acompanha mais a evolução do
+> pipeline — toda execução acontece via `src/main.py`.
+
+---
+
+## Estrutura do repositório
 
 ```
-📦 coastal-flood-prediction
-├── 📁 data/               # Dados brutos e processados (não versionados)
-├── 📁 notebooks/          # Notebooks Jupyter de exploração e modelagem
-│   ├── 01_download_era5.ipynb
-│   ├── 02_eda.ipynb
-│   ├── 03_feature_engineering.ipynb
-│   ├── 04_clustering.ipynb
-│   └── 05_model_training.ipynb
-├── 📁 src/                # Módulos Python reutilizáveis
-│   ├── download.py
-│   ├── features.py
-│   └── model.py
-├── 📁 models/             # Modelos treinados serializados
+LocalFloodForecast
+├── data/                      # CSVs do ERA5 (não versionados — ver Drive)
+├── docs/                      # Artigo de referência + TODO de evoluções
+├── src/
+│   ├── main.py                # Entry-point: roda pipeline + gera saídas
+│   ├── main.ipynb             # Notebook de referência (legado, não editar)
+│   ├── flood/                 # Pacote do pipeline (config/data/features/model/diagnostics/viz)
+│   ├── graphics/              # Saídas por execução (git-ignored)
+│   └── hooks/
+│       └── era5_api.py        # Download dos dados ERA5 via cdsapi
 ├── .gitignore
 ├── requirements.txt
 └── README.md
@@ -38,179 +77,211 @@ O problema é tratado como uma série temporal: o modelo aprende padrões que **
 
 ---
 
-## 📡 Dados Utilizados
+## Dados
 
 ### ERA5 — ECMWF Reanalysis v5
 
-Os dados utilizados neste projeto são provenientes do **ERA5**, o conjunto de reanálise climática de quinta geração do Centro Europeu de Previsão de Tempo a Médio Prazo (ECMWF), disponibilizado gratuitamente pelo **Copernicus Climate Data Store (CDS)**.
+Reanálise climática de quinta geração do ECMWF, disponibilizada pelo
+**Copernicus Climate Data Store (CDS)**.
 
-🔗 **Link para os dados:** [ERA5 Single Levels Time Series — Copernicus CDS](https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels-timeseries?tab=overview)
+- **Conjunto:** [ERA5 Single Levels Time Series — Copernicus CDS](https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels-timeseries?tab=overview)
+- **Local:** ponto único `longitude 19.25, latitude 31` — Mar Mediterrâneo,
+  ao largo da costa da Líbia. *(Ajuste em [src/hooks/era5_api.py](src/hooks/era5_api.py)
+  para outra região.)*
+- **Período:** `2000-01-01` a `2026-03-17`
+- **Granularidade bruta:** horária → ~229.752 registros
+- **Reamostragem do pipeline:** janelas de **6 horas** → **38.292 linhas**
+- **Formato:** CSV (lido direto com `pandas`, sem NetCDF/`xarray`)
+- **Distribuição dos arquivos:** ver [data/GoogleDriveDataExample.md](data/GoogleDriveDataExample.md)
 
-### Variáveis Selecionadas
+### Variáveis e features
 
-| Variável | Descrição | Relevância |
+O download traz 17 variáveis brutas; o pipeline usa 11 após engenharia
+de features:
+
+| Coluna | Origem | Significado |
 |---|---|---|
-| `mean_sea_level_pressure` | Pressão ao nível do mar | Baixa pressão eleva o nível do mar (*storm surge*) |
-| `10m_u_component_of_wind` | Componente zonal do vento | Empurra massa d'água em direção à costa |
-| `10m_v_component_of_wind` | Componente meridional do vento | Idem ao acima, em outra direção |
-| `significant_height_of_combined_wind_waves_and_swell` | Altura significativa das ondas | Indicador direto de risco costeiro |
-| `total_precipitation` | Precipitação total | Contribui para inundação combinada (costeira + pluvial) |
-| `sea_surface_temperature` | Temperatura da superfície do mar | Influencia a intensidade de sistemas de tempestade |
+| `tp` | ERA5 bruta | Precipitação total |
+| `msl` | ERA5 bruta | Pressão ao nível do mar |
+| `msl_tendency` | derivada (`msl.diff`) | Queda rápida → tempestade chegando |
+| `wind_speed_10m` | derivada (`hypot(u10, v10)`) | Magnitude do vento a 10 m |
+| `wind_speed_100m` | derivada (`hypot(u100, v100)`) | Magnitude do vento a 100 m |
+| `fg10` | ERA5 bruta | Rajada de vento a 10 m |
+| `dewpoint_depression` | derivada (`t2m − d2m`) | Baixa → ar úmido, potencial de chuva |
+| `t2m` | ERA5 bruta | Temperatura a 2 m |
+| `ssrd` | ERA5 bruta | Radiação solar descendente |
+| `strd` | ERA5 bruta | Radiação térmica descendente |
+| `sp` | ERA5 bruta | Pressão à superfície |
 
-### Período e Resolução
-
-- **Período:** 2000 – 2023
-- **Resolução temporal:** 6 horas (00h, 06h, 12h, 18h UTC)
-- **Resolução espacial:** 0.25° × 0.25° (~28 km)
-- **Formato:** NetCDF (`.nc`), lido com a biblioteca `xarray`
-
-### Por que NetCDF e não CSV?
-
-O ERA5 é um dataset **multidimensional**: cada arquivo contém simultaneamente múltiplas variáveis, múltiplos pontos geográficos (latitude × longitude) e múltiplos instantes de tempo — formando um cubo de dados 3D `(tempo × latitude × longitude)`. Um CSV é uma tabela plana 2D e não representa bem essa estrutura.
-
-O `xarray` é utilizado para manipular esse cubo de forma eficiente. O CSV entra apenas **após o processamento**, quando o cubo é reduzido a uma série temporal simples (média espacial da região) para alimentar o modelo:
-
-```
-NetCDF (cubo 3D) → xarray → média espacial → DataFrame → CSV (para o modelo de ML)
-```
-
-### Escopo Regional e Desempenho Computacional
-
-O ERA5 global possui cerca de **1 milhão de células geográficas** por instante de tempo, totalizando centenas de GB de dados. Para viabilizar o projeto em máquinas convencionais, **não são utilizados dados globais** — o recorte espacial é feito diretamente na requisição da API via bounding box:
-
-```python
-'area': [-5, -40, -15, -30],  # [N, W, S, E] — apenas a região de interesse
-```
-
-Isso garante que o arquivo baixado tenha poucos GB (ou até MB), e que o DataFrame final de features tenha na ordem de ~35.000 linhas × ~30 colunas — processável em segundos pelo scikit-learn em qualquer máquina convencional.
-
-> ⚠️ **Ajuste o bounding box** para a região costeira que o seu projeto está modelando antes de executar o download.
+Excluídas de propósito: componentes brutas `u10/v10/u100/v100` (substituídas
+pelas magnitudes), `d2m` (já capturado via `dewpoint_depression`), `sst`/`skt`
+(vínculo indireto), `latitude`/`longitude` (constantes — ponto único).
 
 ---
 
-## ⚙️ Pipeline de Machine Learning
-
-O projeto segue uma arquitetura em etapas, indo da coleta dos dados brutos até a geração de alertas:
+## Pipeline
 
 ```
-ERA5 API (cdsapi)
-      ↓
-Dados NetCDF (xarray)
-      ↓
-Engenharia de Features Temporais
-  → Lag features: t-6h, t-12h, t-18h, t-24h
-  → Janelas deslizantes (médias móveis)
-      ↓
-Clustering Não Supervisionado
-  → Identificação de padrões climáticos
-  → Geração de rótulos (risco alto / baixo)
-      ↓
-Modelo Supervisionado de Classificação
-  → Treinado com TimeSeriesSplit
-  → Predição 24h à frente
-      ↓
-🚨 Alerta de Inundação Costeira
+ERA5 CSV
+   │
+   ▼
+load_data        → resample 6h (mean) → 38.292 linhas
+   │
+   ▼
+engineer_features → wind_speed_10m/100m, dewpoint_depression, msl_tendency
+   │
+   ▼
+scale_features    → StandardScaler sobre as 11 features
+   │
+   ├──► detect_anomalies_iso  → is_anomaly_iso  (IsolationForest, 5%)
+   ├──► detect_anomalies_lof  → is_anomaly_lof  (LOF, 5%, k=20)
+   └──► cluster_regimes       → cluster (KMeans, k=4) + in_flood_cluster
+   │
+   ▼
+flag_flood_risk
+   ├──► flood_risk_flag_iso = is_anomaly_iso & in_flood_cluster
+   └──► flood_risk_flag_lof = is_anomaly_lof & in_flood_cluster
+   │
+   ▼
+project_pca (2 componentes) — só para visualização
+   │
+   ▼
+run_diagnostics + builders de figuras → src/graphics/<timestamp>/
 ```
 
----
+### Hiperparâmetros (justificados em [config.py](src/flood/config.py))
 
-## 🤖 Técnicas Utilizadas
+| Parâmetro | Valor | Como foi escolhido |
+|---|---|---|
+| `RESAMPLE_FREQ` | `"6h"` | Suaviza ruído sub-horário, preserva escala sinótica (00/06/12/18 UTC) |
+| `ISO_N_ESTIMATORS` | `200` | Estabiliza o anomaly score; retorno decrescente acima disso |
+| `ISO_CONTAMINATION` | `0.05` | ~5% dos timesteps → ~1.915 anomalias (~74/ano); validado em diagnostics |
+| `LOF_N_NEIGHBORS` | `20` | Default sklearn; varredura {10, 20, 30, 50} no diagnostics mostra Jaccard com Iso variando só 8,99%→11,30% |
+| `LOF_CONTAMINATION` | igual ao Iso | Mantido para comparação justa |
+| `N_CLUSTERS` | `4` | **Validado**: silhouette máximo em k=4 (0,215) na varredura k=2..8 |
+| `KMEANS_N_INIT` | `20` | Acima do default p/ estabilizar clusters entre execuções |
+| `PCA_N_COMPONENTS` | `2` | Visualização apenas; PC1+PC2 retêm 54,9% da variância |
+| `RANDOM_STATE` | `42` | Reprodutibilidade determinística |
 
-### 1. Engenharia de Features Temporais (*Lag Features*)
-Transformação dos dados brutos em representações defasadas no tempo. O modelo recebe como entrada as condições climáticas das últimas 24 horas para prever o risco nas próximas 24 horas, evitando o vazamento de dados (*data leakage*).
-
-### 2. Clustering Não Supervisionado
-Como os dados históricos não possuem rótulos de "inundação", algoritmos de clustering são utilizados para descobrir padrões naturais nos dados e criar rótulos artificiais.
-
-- **K-Means** — ponto de partida, rápido e interpretável
-- **DBSCAN** — detecta outliers e padrões de geometria arbitrária, ideal para dados geoespaciais
-- **Hierarchical Clustering** — análise exploratória da estrutura dos dados via dendrograma
-- **Métricas de avaliação:** Silhouette Score, Davies-Bouldin Index
-
-### 3. Classificação Supervisionada
-Com os rótulos gerados pelo clustering e validados com registros históricos, um classificador é treinado para prever eventos futuros.
-
-- **Random Forest** — modelo principal, robusto a ruído e interpretável via importância de features
-- **Gradient Boosting (XGBoost)** — modelo alternativo de alta performance
-- **Regressão Logística** — baseline para comparação
-
-### 4. Validação Temporal
-Uso obrigatório de **TimeSeriesSplit** em vez de KFold convencional, respeitando a ordem cronológica dos dados e evitando contaminação entre treino e teste.
+O **cluster de risco** é eleito por `flood_risk_score = soma de postos`
+das 3 assinaturas: alta `tp` + baixa `msl` + rajada `fg10` forte. Definido
+em [model.py:cluster_regimes](src/flood/model.py).
 
 ---
 
-## 🛠️ Ferramentas e Ambiente
+## Saídas
 
-| Categoria | Ferramenta |
-|---|---|
-| **Editor** | VSCode + extensão Jupyter |
-| **Versionamento** | Git + GitHub |
-| **Ambiente Python** | `conda` ou `venv` |
-| **Acesso aos dados** | `cdsapi` (API Copernicus) |
-| **Leitura de dados** | `xarray`, `netCDF4` |
-| **Manipulação** | `pandas`, `numpy` |
-| **Visualização** | `matplotlib`, `seaborn`, `folium` |
-| **Machine Learning** | `scikit-learn`, `xgboost` |
-| **Limpeza de notebooks** | `nbstripout` (para commits no Git) |
+Cada execução grava em `src/graphics/<YYYY-MM-DD_HHMMSS>/`:
+
+| Arquivo | Conteúdo | Formato |
+|---|---|---|
+| `timeline_iso.png` | Densidade rolante 30d de anomalias + flood risk + precip suavizada (IsolationForest) | PNG |
+| `timeline_lof.png` | Idem para LOF | PNG |
+| `pca.png` | Scatter PCA dos 4 clusters + flags Iso sobrepostas | PNG |
+| `method_comparison.png` | Barras (só Iso / só LOF / ambos) + PCA 4-categorias | PNG |
+| `cluster_profiles.svg` | Médias de precip/vento/rajada por cluster | SVG |
+| `feature_explorer.png` | Grid 3×4 de séries temporais das 11 features brutas | PNG |
+| `seasonality.svg` | Heatmap ano × mês de eventos sinalizados | SVG |
+| `distributions.svg` | Box plots das features por cluster | SVG |
+| `diagnostics.svg` | 2×3: elbow, silhouette, PCA evr, sensibilidade contamination (Iso), sensibilidade n_neighbors (LOF), Jaccard Iso×LOF | SVG |
+| `flagged_events_iso.csv` | Timesteps sinalizados pelo Iso (data, tp, vento, rajada, pressão, score, cluster) | CSV |
+| `flagged_events_lof.csv` | Idem para LOF | CSV |
+
+Tamanho total típico: **~3,3 MB / execução**. Diretório git-ignored.
+
+### Logs de execução
+
+O script registra timing por etapa, contagens-chave e um bloco
+`[comparação Iso × LOF]` com Jaccard, overlap por método e contagens das
+4 categorias mutuamente exclusivas — tanto na camada de anomalia bruta
+quanto após interseção com o cluster de risco.
 
 ---
 
-## 🚀 Como Executar
+## Como executar
 
 ### 1. Clone o repositório
 ```bash
-git clone https://github.com/seu-usuario/coastal-flood-prediction.git
-cd coastal-flood-prediction
+git clone https://github.com/KaioVinicios/LocalFloodForecast.git
+cd LocalFloodForecast
 ```
 
-### 2. Crie o ambiente virtual e instale as dependências
+### 2. Crie o ambiente e instale as dependências
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # Linux/Mac
-.venv\Scripts\activate     # Windows
+source .venv/bin/activate          # Linux/Mac
+.venv\Scripts\activate             # Windows
 
 pip install -r requirements.txt
 ```
 
-### 3. Configure as credenciais do Copernicus CDS
-Crie o arquivo `~/.cdsapirc` com suas credenciais (cadastro gratuito em [cds.climate.copernicus.eu](https://cds.climate.copernicus.eu)):
+### 3. (Opcional) Configure credenciais do Copernicus CDS
 
+Necessário **apenas** se for baixar dados novos com
+[src/hooks/era5_api.py](src/hooks/era5_api.py). Cadastro gratuito em
+[cds.climate.copernicus.eu](https://cds.climate.copernicus.eu). Crie
+`~/.cdsapirc`:
 ```
 url: https://cds.climate.copernicus.eu/api/v2
-key: SEU-UID:SUA-API-KEY
+key: SUA-API-KEY
 ```
 
-### 4. Execute os notebooks na ordem
+### 4. Obtenha os dados
+Baixe o CSV do Drive (ver [data/GoogleDriveDataExample.md](data/GoogleDriveDataExample.md))
+para a pasta `data/`, **ou** gere o seu próprio:
+```bash
+python src/hooks/era5_api.py
 ```
-01 → Download dos dados ERA5
-02 → Análise exploratória
-03 → Engenharia de features
-04 → Clustering e rotulagem
-05 → Treinamento e avaliação do modelo
+
+### 5. Rode o pipeline
+```bash
+python src/main.py
 ```
+
+Tempo típico: **~40s** em laptop moderno (a etapa mais cara é o
+`run_diagnostics`, que treina KMeans 7× + IsolationForest 4× + LOF 4×
+para a varredura de hiperparâmetros). Saída final aparece em
+`src/graphics/<timestamp>/`.
 
 ---
 
-## 📦 Dependências (`requirements.txt`)
+## Ferramentas
 
-```
-cdsapi
-xarray
-netCDF4
-pandas
-numpy
-matplotlib
-seaborn
-folium
-scikit-learn
-xgboost
-jupyter
-nbstripout
-```
+| Categoria | Ferramenta |
+|---|---|
+| Editor | VSCode |
+| Versionamento | Git + GitHub |
+| Python | 3.14 em `.venv/` |
+| Acesso aos dados | `cdsapi` (API Copernicus) |
+| Manipulação | `pandas`, `numpy` |
+| Machine Learning | `scikit-learn` (IsolationForest, LocalOutlierFactor, KMeans, PCA, StandardScaler) |
+| Visualização | `matplotlib` (saída estática PNG/SVG) |
 
 ---
 
-## 👥 Equipe
+## Roadmap
+
+As próximas evoluções estão trackadas em
+[docs/TODO_evolucoes_analiticas.md](docs/TODO_evolucoes_analiticas.md):
+
+1. **Agrupar timesteps em eventos atômicos** — colapsar runs consecutivos
+   de `flood_risk_flag_*` num único evento (com início, fim, duração, pico).
+2. **Corrigir agregação de `tp`** — passar de média para soma no resample
+   6h (semanticamente correto para precipitação acumulada).
+3. **Validação contra cheias reais** — cruzar as datas sinalizadas com
+   eventos documentados (curadoria manual em `data/known_floods.csv`) e
+   calcular precision/recall por método.
+
+Mais distante (não planejado em detalhe):
+
+- Modelo preditivo com 24h de antecedência (lag features, `TimeSeriesSplit`,
+  classificador supervisionado).
+- Algoritmos adicionais de clustering (DBSCAN, hierárquico).
+- Análise multi-ponto / regional.
+
+---
+
+## Equipe
 
 | Nome | GitHub |
 |---|---|
@@ -220,7 +291,7 @@ nbstripout
 
 ---
 
-## 📄 Licença
+## Licença
 
-Este projeto é desenvolvido para fins acadêmicos.  
-Os dados do ERA5 são disponibilizados sob a [Licença Copernicus](https://cds.climate.copernicus.eu/api/v2/terms/static/licence-to-use-copernicus-products.pdf).
+Projeto desenvolvido para fins acadêmicos. Os dados do ERA5 são
+distribuídos sob a [Licença Copernicus](https://cds.climate.copernicus.eu/api/v2/terms/static/licence-to-use-copernicus-products.pdf).
